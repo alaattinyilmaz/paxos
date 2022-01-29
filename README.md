@@ -1,10 +1,15 @@
 # paxos
 Synchronous Paxos algorithm implementation.
 
+# requirements
+
+    pip install zmq
+    
 # run
   numNodes: number of nodes, crashProb: crash probability, numRounds: number of rounds 
   
     python paxos.py numNodes, crashProb, numRounds 
+
 
 # synchronous-paxos-algorithm
 
@@ -26,7 +31,7 @@ or none.
 
 # detailed-specifications
 
-Please click [here](https://github.com/alaattinyilmaz/map-reduce/blob/main/map-reduce-specs.pdf) link to read all spesifications.
+Please click [here](https://github.com/alaattinyilmaz/paxos/blob/main/paxos-specs.pdf) link to read all spesifications.
 
 # further-read
 
