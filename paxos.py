@@ -3,6 +3,7 @@ import zmq
 from multiprocessing import Process, Barrier
 import os
 import time
+import sys
 
 #  kill $(sudo lsof -t -i:5550)
 
@@ -20,7 +21,6 @@ def broadcast_to_other_nodes(msg, proposer, N):
 def send(msg, proposer, target):
     json_msg = {"sender_id": proposer, "receiver_id": target, "msg": msg}
     push_sockets[target].send_json(json_msg)
-    #time.sleep(0.3)
 
 def send_failure(msg, proposer, target, prob):
     if(random.random() <= prob):
@@ -28,13 +28,14 @@ def send_failure(msg, proposer, target, prob):
     else:
         json_msg = {"sender_id": proposer, "receiver_id": target, "msg": msg}
     push_sockets[target].send_json(json_msg)
-    #time.sleep(0.3)
     pass
 
 def paxos_node(barrier, id, prob, N, val, num_rounds):
-    
+
+    timeout = 5
+    timeout_start = time.time()
+
     pid = os.getpid()
-    #print("PAXOS PROCESS STARTS: {} {}".format(pid, id))
 
     global pull_socket
     global push_sockets
@@ -65,9 +66,11 @@ def paxos_node(barrier, id, prob, N, val, num_rounds):
     propose_val = None
     decision = None
     node_role = None
-
     sent_propose = False
+
     for r in range(num_rounds):
+
+        #print("ROUND {} STARTED WITH INITIAL VALUE {} at node {}".format(r, val, id))
         # Leader of the round r
         leader_id = r % N
         node_role = "PROPOSER" if id == leader_id else "ACCEPTOR"
@@ -82,16 +85,16 @@ def paxos_node(barrier, id, prob, N, val, num_rounds):
             num_start_msgs = 0
             num_join_msgs = 0
             start_taken_from_itself = False
-
+            recv_msgs = []
             # PHASE 1 STARTS
             while(num_received_msgs != N):
                 try:
                     pull_socket.RCVTIMEO = 200
                     recv_json_msg = pull_socket.recv_json()
                     num_received_msgs += 1
-
-                    #print("LEADER OF {} RECEIVED IN JOIN PHASE: {}".format(r, recv_json_msg['msg']))
-                    print("PROPOSER {}, ROUND {}, JOIN PHASE: {}".format(id,r,recv_json_msg))
+                    recv_msgs.append(recv_json_msg)
+                    print("LEADER OF {} RECEIVED IN JOIN PHASE: {}".format(r, recv_json_msg['msg']))
+                    #print("PROPOSER {}, ROUND {}, JOIN PHASE: {}".format(id,r,recv_json_msg))
 
                     if("START" in recv_json_msg['msg']):
                         #num_start_msgs += 1
@@ -108,8 +111,9 @@ def paxos_node(barrier, id, prob, N, val, num_rounds):
                         join_msgs.append(join_msg)
 
                 except:
-                    
-#print("num_received_msgs",num_received_msgs)
+                    if(time.time() > timeout_start + timeout):
+                        break
+                    #print("lockcontrol",id, recv_msgs, num_received_msgs)
                     pass
             
             if(num_join_msgs + num_start_msgs > N / 2):
@@ -138,9 +142,12 @@ def paxos_node(barrier, id, prob, N, val, num_rounds):
                 sent_propose = True
                 
             elif(num_join_msgs + num_start_msgs <= N / 2):
-                broadcast_to_other_nodes("ROUNDCHANGE", leader_id, N)
                 print("LEADER OF ROUND {} CHANGED ROUND".format(r))
-                barrier.wait()
+                broadcast_to_other_nodes("ROUNDCHANGE", leader_id, N)
+                try:
+                    barrier.wait()
+                except:
+                    return
                 continue
 
             # Maybe there should be a barrier in here? because if may not be 
@@ -156,9 +163,9 @@ def paxos_node(barrier, id, prob, N, val, num_rounds):
                         num_received_msgs += 1
                         recv_msgs_alos.append(recv_json_msg)
 
-                        #print("LEADER OF {} RECEIVED IN VOTE PHASE: {}".format(r, recv_json_msg['msg']))
+                        print("LEADER OF {} RECEIVED IN VOTE PHASE: {}".format(r, recv_json_msg['msg']))
                         
-                        print("PROPOSER {}, ROUND {}, VOTE PHASE: {}".format(id,r,recv_json_msg))
+                        #print("PROPOSER {}, ROUND {}, VOTE PHASE: {}".format(id,r,recv_json_msg))
 
                         if("VOTE" in recv_json_msg['msg']):
                             num_vote_msgs += 1
@@ -174,14 +181,16 @@ def paxos_node(barrier, id, prob, N, val, num_rounds):
                     except:
                         pass
                 
-                print("id {}, round {}, num_received_msgs {}, num_vote_msgs {}, num_propose_msgs {}, \n messages: {}".format(id, r, num_received_msgs, num_vote_msgs, num_propose_msgs, recv_msgs_alos))
+                #print("id {}, round {}, num_received_msgs {}, num_vote_msgs {}, num_propose_msgs {}, \n messages: {}".format(id, r, num_received_msgs, num_vote_msgs, num_propose_msgs, recv_msgs_alos))
                 if(num_vote_msgs + num_propose_msgs > N/2):
                     decision = propose_val
-                    barrier.wait()
-
-                print("LEADER OF {} DECIDED ON VALUE: {}".format(r, decision))
-                
-                continue
+                    print("LEADER OF {} DECIDED ON VALUE: {}".format(r, decision))
+                    try:
+                        barrier.wait()
+                    except:
+                        return
+            
+            continue
             
         elif(node_role == "ACCEPTOR"):
             recv_msgs = []
@@ -192,69 +201,94 @@ def paxos_node(barrier, id, prob, N, val, num_rounds):
 
             # Receive Message P1?
             # There is a problem, acceptors go to other round just by passing this timeout value!
-            try:
-                pull_socket.RCVTIMEO = 200
-                recv_json_msg = pull_socket.recv_json()
-                
-                #print("ACCEPTOR {} RECEIVED IN JOIN PHASE: {}".format(id, recv_json_msg['msg']))
-                print("ACCEPTOR {}, ROUND {}, JOIN PHASE: {}".format(id, r, recv_json_msg))
+            while(num_received_msgs == 0):
+                try:
+                    pull_socket.RCVTIMEO = 200
+                    recv_json_msg = pull_socket.recv_json()
+                    num_received_msgs += 1
+                    print("ACCEPTOR {} RECEIVED IN JOIN PHASE: {}".format(id, recv_json_msg['msg']))
+                    #print("ACCEPTOR {}, ROUND {}, JOIN PHASE: {}".format(id, r, recv_json_msg))
 
-                # Responding to round proposer or sender_id ? taken from message?? but crash r % N ?? maybe not sender?
-                if("START" in recv_json_msg['msg']):
-                    send_failure("JOIN {} {}".format(max_voted_round, max_voted_val), leader_id, leader_id, prob)
+                    # Responding to round proposer or sender_id ? taken from message?? but crash r % N ?? maybe not sender?
+                    if("START" in recv_json_msg['msg']):
+                        send_failure("JOIN {} {}".format(max_voted_round, max_voted_val), leader_id, leader_id, prob)
 
-                elif("CRASH" in recv_json_msg['msg']):
-                    send("CRASH {}".format(r % N), leader_id, leader_id)
-            except:
-                pass
+                    elif("CRASH" in recv_json_msg['msg']):
+                        send("CRASH {}".format(r % N), leader_id, leader_id)
+                except:
+                    if(time.time() > timeout_start + timeout):
+                        break
+                    pass
         
-            try:
-                pull_socket.RCVTIMEO = 200
-                # Recieve message P2?
-                recv_json_msg = pull_socket.recv_json()
-                
-                #print("ACCEPTOR {} RECEIVED IN VOTE PHASE: {}".format(id, recv_json_msg['msg']))
-                print("ACCEPTOR {}, ROUND {}, VOTE PHASE: {}".format(id, r, recv_json_msg))
+            num_received_msgs = 0
+            while(num_received_msgs == 0):
+                try:
+                    pull_socket.RCVTIMEO = 200
+                    # Recieve message P2?
+                    recv_json_msg = pull_socket.recv_json()
+                    num_received_msgs += 1
+                    print("ACCEPTOR {} RECEIVED IN VOTE PHASE: {}".format(id, recv_json_msg['msg']))
+                    #print("ACCEPTOR {}, ROUND {}, VOTE PHASE: {}".format(id, r, recv_json_msg))
 
-                # Send to proposer of round r?? or 
-                if("PROPOSE" in recv_json_msg['msg']):
-                    max_voted_round = r
-                    max_voted_val_of_msg = recv_json_msg['msg'].split()[1]
-                    max_voted_val = None if max_voted_val_of_msg == 'None' else int(max_voted_val_of_msg)
-                    send_failure("VOTE", leader_id, leader_id, prob)
-                    barrier.wait()
-                    continue
+                    # Send to proposer of round r?? or 
+                    if("PROPOSE" in recv_json_msg['msg']):
+                        max_voted_round = r
+                        max_voted_val_of_msg = recv_json_msg['msg'].split()[1]
+                        max_voted_val = None if max_voted_val_of_msg == 'None' else int(max_voted_val_of_msg)
+                        send_failure("VOTE", leader_id, leader_id, prob)
+                        barrier.wait()
+                        continue
 
-                elif("CRASH" in recv_json_msg['msg']):
-                    send("CRASH {}".format(r % N), leader_id, leader_id)
-                    continue
-                
-                elif("ROUNDCHANGE" in recv_json_msg['msg']):
-                    barrier.wait()
-                    continue
-            except:
-                pass
-
+                    elif("CRASH" in recv_json_msg['msg']):
+                        send("CRASH {}".format(r % N), leader_id, leader_id)
+                        continue
+                    
+                    elif("ROUNDCHANGE" in recv_json_msg['msg']):
+                        try:
+                            barrier.wait()
+                        except:
+                            return
+                        continue
+                except:
+                    if(time.time() > timeout_start + timeout):
+                        break
+                    pass
+            
 if __name__ == '__main__':
 
+    
     os.system('kill $(sudo lsof -i:5550)')
     os.system('kill $(sudo lsof -i:5551)')
     os.system('kill $(sudo lsof -i:5552)')
     os.system('kill $(sudo lsof -i:5553)')
-
-    num_proc = 4
-    prob = 0.1
-    num_rounds = 3
-    N = num_proc
-    val = 0 # 0 or 1 binary value
-    sockets = None
-    barrier = Barrier(N, timeout=50)
-    paxos_nodes = [Process(target=paxos_node, args=(barrier, id, prob, N, val, num_rounds)) for id in range(num_proc)]
+    os.system('kill $(sudo lsof -i:5554)')
+    os.system('kill $(sudo lsof -i:5555)')
+    os.system('kill $(sudo lsof -i:5556)')
+    
+    
+    quests = sys.argv
+    if(len(quests) == 4):
         
-    for pn in paxos_nodes:
-        pn.start()
-        pass
+        num_proc = int(sys.argv[1])
+        prob = float(sys.argv[2])
+        num_rounds = int(sys.argv[3])
+        
+        val = random.randint(0,1)
 
-    for pn in paxos_nodes:
-        pn.join()
-        pass
+        #num_proc = 4
+        #prob = 0.1
+        #num_rounds = 3
+        N = num_proc
+        #val = 0 # 0 or 1 binary value
+        
+        barrier = Barrier(N, timeout=5)
+        print("NUMNODES: {}, CRASHPROB: {}, NUMROUNDS: {}".format(N, prob, num_rounds))
+        paxos_nodes = [Process(target=paxos_node, args=(barrier, id, prob, N, val, num_rounds)) for id in range(num_proc)]
+        
+        for pn in paxos_nodes:
+            pn.start()
+            pass
+
+        for pn in paxos_nodes:
+            pn.join()
+            pass
