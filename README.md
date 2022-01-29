@@ -1,10 +1,15 @@
 # paxos
 Synchronous Paxos algorithm implementation.
 
+# requirements
+
+    pip install zmq
+    
 # run
   numNodes: number of nodes, crashProb: crash probability, numRounds: number of rounds 
   
     python paxos.py numNodes, crashProb, numRounds 
+
 
 # synchronous-paxos-algorithm
 
