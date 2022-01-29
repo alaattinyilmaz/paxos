@@ -26,7 +26,7 @@ or none.
 
 # detailed-specifications
 
-Please click [here](https://github.com/alaattinyilmaz/map-reduce/blob/main/paxos-specs.pdf) link to read all spesifications.
+Please click [here](https://github.com/alaattinyilmaz/paxos/blob/main/paxos-specs.pdf) link to read all spesifications.
 
 # further-read
 
