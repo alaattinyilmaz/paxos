@@ -1,0 +1,2 @@
+# paxos
+Paxos algorithm implementation.
